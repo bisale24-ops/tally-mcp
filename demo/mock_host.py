@@ -16,6 +16,12 @@ to check the layout.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Running this by path puts demo/ on sys.path, not the project root.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import argparse
 import contextlib
 import json

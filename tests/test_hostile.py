@@ -435,3 +435,48 @@ async def test_a_busy_database_is_reported_as_something_to_retry(tmp_path, monke
     finally:
         blocker.execute("ROLLBACK")
         blocker.close()
+
+
+@pytest.mark.anyio
+async def test_adding_the_same_person_twice_is_answered_not_crashed(client_store):
+    async with connected(client_store) as client:
+        await client.call_tool("start_household", {"name": "Apartment 4B", "currency": "USD", "your_name": "Sam"})
+        await client.call_tool("add_person", {"name": "Chris"})
+        again = await client.call_tool("add_person", {"name": "Chris"})
+
+        assert again.is_error
+        assert "already" in said(again)
+        roster = await client.call_tool("show_balances", {})
+        names = [row["name"] for row in roster.structured_content["balances"]]
+        assert names.count("Chris") == 1
+
+
+@pytest.mark.anyio
+async def test_a_read_that_fails_on_the_replay_path_is_still_speakable(client_store):
+    """The load behind a replayed answer sat outside the guard that covers the
+    write, so a database going away mid-call came back as a raw failure."""
+    import sqlite3
+
+    async with connected(client_store) as client:
+        await client.call_tool("start_household", {"name": "Apartment 4B", "currency": "USD", "your_name": "Sam"})
+        await client.call_tool("add_person", {"name": "Chris"})
+        args = {"amount": "10.00", "description": "lunch", "idempotency_key": "same-utterance"}
+        assert not (await client.call_tool("record_expense", args)).is_error
+
+        real_load = client_store.load
+        reads = {"count": 0}
+
+        def load_until_the_replay(household_id):
+            reads["count"] += 1
+            if reads["count"] > 1:
+                raise sqlite3.OperationalError("database is locked")
+            return real_load(household_id)
+
+        client_store.load = load_until_the_replay
+        retried = await client.call_tool("record_expense", args)
+
+    # Two reads means the first, inside current_household, went through and the
+    # one behind the replayed answer is the one that failed.
+    assert reads["count"] == 2
+    assert retried.is_error
+    assert "try that again" in said(retried).lower()

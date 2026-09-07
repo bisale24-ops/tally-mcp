@@ -276,3 +276,14 @@ def test_the_duplicate_name_contract_holds_at_the_store(tmp_path):
     stale.members = [m for m in stale.members if m.name != "Robin"]
     with pytest.raises(ValueError):
         store.add_member(stale, stale.add_member("Robin"))
+
+
+def test_the_demo_does_not_flag_a_second_run_as_a_failure():
+    """Running the script twice against the same ledger is the normal case when
+    a recording gets retaken."""
+    from demo.conversation import already_there
+
+    assert already_there("You're already in Apartment 4B.")
+    assert already_there("Chris is already in Apartment 4B")
+    assert not already_there("I couldn't read 'ten' as an amount.")
+    assert not already_there("There's nothing to undo yet.")

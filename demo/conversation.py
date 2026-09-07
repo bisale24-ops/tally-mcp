@@ -87,6 +87,12 @@ def pick_voice(preferred: str | None) -> str | None:
     return next((v for v in VOICES if v in available), None)
 
 
+def already_there(answer: str) -> bool:
+    """A second run against the same ledger says the household and the people
+    are already in it. That is the ledger working, not the demo failing."""
+    return "already" in answer.lower()
+
+
 def speak(text: str, voice: str | None) -> None:
     """Read a reply aloud with the system voice, when there is one."""
     say = shutil.which("say")
@@ -105,7 +111,7 @@ async def run(url: str, *, out_loud: bool, voice: str | None, pause: float) -> N
             elapsed = (time.perf_counter() - started) * 1000
 
             said = " ".join(b.text for b in result.content if b.type == "text")
-            marker = "!!" if result.is_error else "  "
+            marker = "!!" if result.is_error and not already_there(said) else "  "
             print(f"{BOLD}{GREEN}alexa{RESET}{marker} {said}")
             payload = result.structured_content or {}
             shown = " | balance sheet pushed to the screen" if "balances" in payload else ""

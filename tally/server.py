@@ -169,7 +169,10 @@ def create_server(store: Store | None = None, *, public_url: str | None = None) 
         return household
 
     def me(household: Household) -> Member | None:
-        member_id = store.member_id_for_principal(principal(), household.id)
+        try:
+            member_id = store.member_id_for_principal(principal(), household.id)
+        except sqlite3.Error as exc:
+            raise ToolError(BUSY) from exc
         return household.member_by_id(member_id) if member_id else None
 
     async def resolve(household: Household, spoken: str | None, ctx: Context[Any]) -> Member:
@@ -350,10 +353,10 @@ def create_server(store: Store | None = None, *, public_url: str | None = None) 
         )
         try:
             replayed = store.add_entry(household, entry, call_keys=keys, spoken=spoken)
+            if replayed is not None:
+                return reply(ctx, view(store.load(household.id) or household), replayed)
         except sqlite3.Error as exc:
             raise ToolError(BUSY) from exc
-        if replayed is not None:
-            return reply(ctx, view(store.load(household.id) or household), replayed)
         await ledger_changed(ctx)
         return reply(ctx, view(household), spoken)
 
@@ -398,11 +401,11 @@ def create_server(store: Store | None = None, *, public_url: str | None = None) 
         keys = call_keys("settle_up", idempotency_key, amount=paid, sender=sender.id, recipient=recipient.id)
         try:
             replayed = store.add_entry(household, entry, call_keys=keys, spoken=spoken)
+            if replayed is not None:
+                data = view(store.load(household.id) or household)
+                return reply(ctx, data, replayed, data.summary)
         except sqlite3.Error as exc:
             raise ToolError(BUSY) from exc
-        if replayed is not None:
-            data = view(store.load(household.id) or household)
-            return reply(ctx, data, replayed, data.summary)
         await ledger_changed(ctx)
         data = view(household)
         return reply(ctx, data, spoken, data.summary)
@@ -442,11 +445,11 @@ def create_server(store: Store | None = None, *, public_url: str | None = None) 
         spoken = f"Undone: {say_amount(entry.total, household.currency)} for {entry.description}."
         try:
             replayed, voided = store.void_entry(entry.id, call_keys=keys, spoken=spoken)
+            if replayed is not None:
+                data = view(store.load(household.id) or household)
+                return reply(ctx, data, replayed, data.summary)
         except sqlite3.Error as exc:
             raise ToolError(BUSY) from exc
-        if replayed is not None:
-            data = view(store.load(household.id) or household)
-            return reply(ctx, data, replayed, data.summary)
         if not voided:
             raise ToolError("Someone just undid that one. Ask me what's left.")
 

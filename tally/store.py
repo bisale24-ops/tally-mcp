@@ -79,6 +79,8 @@ CREATE INDEX IF NOT EXISTS idx_allocations_entry   ON allocations(entry_id);
 class Store:
     """Household storage backed by SQLite."""
 
+    BUSY_TIMEOUT = 2.0
+
     def __init__(self, path: str | Path = "tally.db") -> None:
         self.path = str(path)
         with self._connect() as conn:
@@ -86,10 +88,13 @@ class Store:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path, isolation_level=None)
+        # The driver waits five seconds by default, which on a device that
+        # answers out loud is a silence nobody waits through.
+        conn = sqlite3.connect(self.path, isolation_level=None, timeout=self.BUSY_TIMEOUT)
         try:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute(f"PRAGMA busy_timeout = {int(self.BUSY_TIMEOUT * 1000)}")
             # WAL: several flatmates can talk to Alexa at once.
             conn.execute("PRAGMA journal_mode = WAL")
             with conn:

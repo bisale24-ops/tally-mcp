@@ -39,9 +39,9 @@ SCRIPT: list[tuple[str, str, dict]] = [
     ("Add Maya.", "add_person", {"name": "Maya"}),
     ("Add Dana.", "add_person", {"name": "Dana"}),
     (
-        "I paid a hundred and thirty two dollars for dinner.",
+        "Sam paid a hundred and thirty two dollars for dinner.",
         "record_expense",
-        {"amount": "132.00", "description": "dinner"},
+        {"amount": "132.00", "description": "dinner", "paid_by": "Sam"},
     ),
     (
         "Chris paid thirty four fifty for the Uber home, just me and him.",
@@ -128,7 +128,7 @@ def main() -> None:
         print(f"{DIM}voice: {chosen or 'none available - printing only'}{RESET}")
 
     try:
-        anyio.run(functools.partial(run, args.url, out_loud=args.speak, voice=args.voice, pause=args.pause))
+        anyio.run(functools.partial(run, args.url, out_loud=args.speak, voice=chosen, pause=args.pause))
     except Exception as exc:  # the server is not up, or the URL is wrong
         print(f"Could not talk to {args.url}: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

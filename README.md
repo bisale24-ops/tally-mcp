@@ -4,12 +4,12 @@ An MCP server for Alexa+ that tracks who paid for what in a household, and works
 out the fewest payments that settle everyone up.
 
 ```
-"Alexa, I paid 132 dollars for dinner, split with Chris and Maya."
-   → Recorded 132.00 USD for dinner, paid by Sam, split 3 ways.
-     That's 44.00 USD each.
+"Alexa, Sam paid 132 dollars for dinner, split with Chris and Maya."
+   → Recorded 132 dollars for dinner, paid by Sam, split 3 ways.
+     That's 44 dollars each.
 
 "Alexa, who owes what?"
-   → 2 payments settle Apartment 4B. The biggest: Maya owes Sam 44.00 USD.
+   → 2 payments settle Apartment 4B. The biggest: Maya owes Sam 44 dollars.
 ```
 
 ## Why voice, and why a shared device
@@ -23,16 +23,21 @@ Voice removes the capture cost: you say it while the bill is still in your hand.
 
 And Alexa is not a personal device — it sits in the kitchen and belongs to
 everyone in the apartment. A shared ledger on a shared device is something a
-per-phone app structurally cannot be. Any flatmate can record a purchase or ask
-where things stand, without an invite, an install, or an account.
+per-phone app structurally cannot be: any flatmate can record a purchase or ask
+where things stand without installing anything.
+
+Being shared is also why the payer gets named out loud. "Sam paid for dinner"
+works from the kitchen counter whoever is standing at it; "I paid" only means
+something on an account linked to one person, which is what the invite code
+establishes.
 
 ## What it does
 
 | Tool | Spoken example |
 |---|---|
-| `record_expense` | "I paid 132 for dinner, split with Chris and Maya" |
+| `record_expense` | "Sam paid 132 for dinner, split with Chris and Maya" |
 | `show_balances` | "Who owes what?" |
-| `settle_up` | "Chris paid me back 44" |
+| `settle_up` | "Chris paid Sam back 44" |
 | `undo_last` | "No — cancel that" |
 | `add_person` | "Add Dana to the apartment" |
 | `start_household` | "Start a household called Apartment 4B" |
@@ -86,7 +91,7 @@ among itself.)
 
 ```bash
 uv sync
-uv run pytest                        # 238 tests
+uv run pytest                        # 243 tests
 uv run python -m tally --stdio       # for the MCP Inspector
 ```
 
@@ -189,7 +194,7 @@ else's ledger.
 
 ## Testing
 
-238 tests, in seven layers:
+243 tests, in seven layers:
 
 - **Property-based** (Hypothesis) over the money and ledger invariants —
   conservation, fairness bounds, settlement correctness.

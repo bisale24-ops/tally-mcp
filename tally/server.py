@@ -27,7 +27,7 @@ from mcp_types import CallToolResult, Icon, TextContent, ToolAnnotations
 from pydantic import AnyHttpUrl, AnyUrl, BaseModel, Field
 
 from .auth import TallyAuthProvider
-from .ledger import Household, Member, settle
+from .ledger import Household, Member, fold, settle
 from .login import make_login_route
 from .money import parse_amount, say_amount, show_amount
 from .store import Store
@@ -184,7 +184,8 @@ def create_server(store: Store | None = None, *, public_url: str | None = None) 
         if member is not None:
             return member
 
-        candidates = [m for m in household.members if m.name.casefold().startswith(spoken.strip().casefold()[:1])]
+        heard = fold(spoken)
+        candidates = [m for m in household.members if fold(m.name).startswith(heard)]
         names = ", ".join(m.name for m in household.members)
 
         if len(candidates) > 1:
@@ -484,7 +485,9 @@ def create_server(store: Store | None = None, *, public_url: str | None = None) 
         instructions=(
             "Tally tracks shared expenses for a household out loud. Record what someone "
             "paid as it happens, then ask who owes what. Amounts are spoken as plain "
-            "numbers. When the user says 'I' or 'me', omit the payer argument."
+            "numbers. Alexa is usually a shared device, so when the speaker names a payer "
+            "pass it as paid_by. Omit paid_by only for 'I' or 'me', and only when the "
+            "account is one person's own."
         ),
         version="0.1.0",
         extensions=[apps],
@@ -604,6 +607,8 @@ def create_server(store: Store | None = None, *, public_url: str | None = None) 
             raise ToolError(str(exc)) from exc
         try:
             code = store.add_member(household, member)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
         except sqlite3.Error as exc:
             raise ToolError(BUSY) from exc
         await ledger_changed(ctx)

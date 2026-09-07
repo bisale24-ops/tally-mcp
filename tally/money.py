@@ -79,6 +79,10 @@ def parse_amount(value: str | int | float | Decimal, currency: str) -> int:
             cleaned = cleaned.replace(",", "")
         elif "," in cleaned:
             if _THOUSANDS.fullmatch(cleaned):
+                # "1,234" reads as both 1234 and 1.234 where three decimals
+                # exist, and the two differ by a factor of a thousand.
+                if exp == 3 and cleaned.count(",") == 1:
+                    raise ValueError(f"ambiguous amount for {currency}: {value!r}")
                 cleaned = cleaned.replace(",", "")
             elif _DECIMAL_COMMA.fullmatch(cleaned):
                 cleaned = cleaned.replace(",", ".")

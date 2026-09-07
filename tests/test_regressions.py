@@ -234,3 +234,45 @@ async def test_shares_that_do_not_add_up_are_refused(store):
             {"amount": "30.00", "description": "dinner", "shares": {"Sam": "5.00", "Chris": "10.00"}},
         )
         assert result.is_error
+
+
+@pytest.mark.anyio
+async def test_disambiguation_only_offers_names_that_could_have_been_said(store):
+    """Falling back to the first letter turns "An" into a question about
+    everyone whose name starts with A."""
+    async with connected(store) as client:
+        await client.call_tool("start_household", {"name": "Apartment 4B", "currency": "USD", "your_name": "Anna"})
+        await client.call_tool("add_person", {"name": "Andrew"})
+        await client.call_tool("add_person", {"name": "Alex"})
+
+        asked = await client.call_tool("record_expense", {"amount": "10.00", "description": "lunch", "paid_by": "An"})
+        assert asked.is_error
+        assert "Anna" in said(asked) and "Andrew" in said(asked)
+        assert "Alex" not in said(asked)
+
+
+def test_a_lone_group_of_three_is_ambiguous_where_three_decimals_exist():
+    """1,234 dinars and 1.234 dinars are both readings of "1,234" in a currency
+    with three decimal places. Guessing thousands is a thousandfold error."""
+    with pytest.raises(ValueError):
+        parse_amount("1,234", "KWD")
+
+
+def test_grouped_thousands_still_parse_in_a_three_decimal_currency():
+    assert parse_amount("1,234,567", "KWD") == 1234567000
+
+
+def test_a_short_group_is_still_a_decimal_point_in_a_three_decimal_currency():
+    assert parse_amount("12,5", "KWD") == 12500
+
+
+def test_the_duplicate_name_contract_holds_at_the_store(tmp_path):
+    """`add_member` documents ValueError; its caller has to be ready for it."""
+    store = Store(tmp_path / "t.db")
+    flat = store.create_household("Apartment 4B", "USD", founder="Sam", principal="p")
+    store.add_member(flat, flat.add_member("Robin"))
+
+    stale = store.load(flat.id)
+    stale.members = [m for m in stale.members if m.name != "Robin"]
+    with pytest.raises(ValueError):
+        store.add_member(stale, stale.add_member("Robin"))

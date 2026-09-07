@@ -1,0 +1,50 @@
+[project]
+name = "tally-mcp"
+version = "0.1.0"
+description = "Voice-first shared household ledger, exposed to Alexa+ as an MCP server"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "mcp>=2.2.0",
+]
+
+[project.scripts]
+tally-mcp = "tally.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "anyio>=4.15.1",
+    "asgi-lifespan>=2.1.0",
+    "httpx>=0.28.1",
+    "hypothesis>=6.167.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.6",
+]
+
+[tool.uv.build-backend]
+module-name = "tally"
+module-root = ""
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+# Import from the working tree, so the suite never depends on an install.
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "S", "C4", "PTH"]
+ignore = [
+    "S101",  # assert is the point of a test suite
+    "S106",  # OAuth `token_type="Bearer"` is a protocol constant, not a password
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106"]

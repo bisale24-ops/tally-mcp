@@ -100,8 +100,9 @@ def speak(text: str, voice: str | None) -> None:
         subprocess.run([say, "-v", voice, text], check=False)  # noqa: S603 - fixed argv, no shell
 
 
-async def run(url: str, *, out_loud: bool, voice: str | None, pause: float) -> None:
-    async with Client(url, extensions=[advertise(APPS_EXTENSION, {"mimeTypes": [APP_MIME_TYPE]})]) as client:
+async def run(url: str, *, out_loud: bool, voice: str | None, pause: float, screen: bool = True) -> None:
+    apps = [advertise(APPS_EXTENSION, {"mimeTypes": [APP_MIME_TYPE]})] if screen else []
+    async with Client(url, extensions=apps) as client:
         for utterance, tool, args in SCRIPT:
             print(f"\n{BOLD}{BLUE}you  {RESET} {utterance}")
             print(f"{DIM}     -> {tool}({', '.join(f'{k}={v!r}' for k, v in args.items())}){RESET}")
@@ -114,7 +115,7 @@ async def run(url: str, *, out_loud: bool, voice: str | None, pause: float) -> N
             marker = "!!" if result.is_error and not already_there(said) else "  "
             print(f"{BOLD}{GREEN}alexa{RESET}{marker} {said}")
             payload = result.structured_content or {}
-            shown = " | balance sheet pushed to the screen" if "balances" in payload else ""
+            shown = " | balance sheet pushed to the screen" if screen and "balances" in payload else ""
             print(f"{DIM}     {elapsed:.0f} ms{shown}{RESET}")
 
             if out_loud:
@@ -128,13 +129,27 @@ def main() -> None:
     parser.add_argument("--speak", action="store_true", help="Read the answers aloud.")
     parser.add_argument("--voice", default=None, help=f"System voice; defaults to the best of {', '.join(VOICES)}.")
     parser.add_argument("--pause", type=float, default=1.2, help="Seconds between turns.")
+    parser.add_argument(
+        "--no-screen",
+        action="store_true",
+        help="Answer as a speaker with no display would, which is more words.",
+    )
     args = parser.parse_args()
     chosen = pick_voice(args.voice) if args.speak else None
     if args.speak:
         print(f"{DIM}voice: {chosen or 'none available - printing only'}{RESET}")
 
     try:
-        anyio.run(functools.partial(run, args.url, out_loud=args.speak, voice=chosen, pause=args.pause))
+        anyio.run(
+            functools.partial(
+                run,
+                args.url,
+                out_loud=args.speak,
+                voice=chosen,
+                pause=args.pause,
+                screen=not args.no_screen,
+            )
+        )
     except Exception as exc:  # the server is not up, or the URL is wrong
         print(f"Could not talk to {args.url}: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

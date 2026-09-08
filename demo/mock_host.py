@@ -52,7 +52,8 @@ HOST_PAGE = """<!doctype html><meta charset="utf-8"><title>Mock Alexa+ host</tit
  .bar{padding:10px 16px;border-bottom:1px solid #1e2733;display:flex;gap:12px;align-items:center}
  .tag{font-size:11px;padding:2px 8px;border-radius:99px;background:#1a2230;color:#7d8b99}
  .live{background:#12331f;color:#4ade80}
- .stage{padding:24px;display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+ .stage{padding:24px;display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;
+        transform:scale(__ZOOM__);transform-origin:top left;width:calc(100% / __ZOOM__)}
  .dev{background:#000;border-radius:14px;overflow:hidden;border:1px solid #223}
  .cap{padding:6px 10px;font-size:12px;color:#67727f}
  iframe{border:0;display:block;background:#fff}
@@ -172,8 +173,8 @@ def sample_ledger() -> dict[str, Any]:
     }
 
 
-def build(tally_url: str) -> Starlette:
-    page = HOST_PAGE.replace(
+def build(tally_url: str, zoom: float = 1.0) -> Starlette:
+    page = HOST_PAGE.replace("__ZOOM__", f"{zoom:g}").replace(
         # The app closes its own <script>; unescaped it would close this one too.
         "__APP__",
         json.dumps(BALANCE_APP).replace("</script>", "<\\/script>"),
@@ -237,8 +238,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="mock_host", description=__doc__)
     parser.add_argument("--port", type=int, default=8977)
     parser.add_argument("--tally", default="http://127.0.0.1:8000/mcp")
+    parser.add_argument(
+        "--zoom",
+        type=float,
+        default=1.0,
+        help="Scale the device frames so they fit a laptop screen next to a terminal.",
+    )
     args = parser.parse_args()
-    uvicorn.run(build(args.tally), host="127.0.0.1", port=args.port, log_level="warning")
+    uvicorn.run(build(args.tally, args.zoom), host="127.0.0.1", port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":

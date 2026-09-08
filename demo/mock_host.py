@@ -208,8 +208,12 @@ def build(tally_url: str) -> Starlette:
         yield
         await drop()
 
+    # A reload has to fetch the current page and the current ledger. Served
+    # without these, a browser is free to answer a take from its cache.
+    fresh = {"Cache-Control": "no-store"}
+
     async def home(_: Request) -> HTMLResponse:
-        return HTMLResponse(page)
+        return HTMLResponse(page, headers=fresh)
 
     async def ledger(_: Request) -> JSONResponse:
         try:
@@ -217,11 +221,11 @@ def build(tally_url: str) -> Starlette:
             result = await session.call_tool("show_balances", {})
         except Exception:
             await drop()
-            return JSONResponse({"source": "sample", "ledger": fallback})
+            return JSONResponse({"source": "sample", "ledger": fallback}, headers=fresh)
         if result.is_error or not result.structured_content:
             # No household yet: the app shows its empty state rather than stale numbers.
-            return JSONResponse({"source": "live", "ledger": None})
-        return JSONResponse({"source": "live", "ledger": result.structured_content})
+            return JSONResponse({"source": "live", "ledger": None}, headers=fresh)
+        return JSONResponse({"source": "live", "ledger": result.structured_content}, headers=fresh)
 
     return Starlette(
         routes=[Route("/", home), Route("/state", ledger)],

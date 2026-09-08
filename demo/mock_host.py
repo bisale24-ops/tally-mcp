@@ -110,7 +110,16 @@ async function poll() {
     document.getElementById("status").textContent = state.source;
     document.getElementById("status").className = "tag" + (state.source === "live" ? " live" : "");
     const stamp = JSON.stringify(state.ledger);
-    if (state.ledger && stamp !== JSON.stringify(lastSeen)) {
+    if (!state.ledger) {
+      // The ledger was emptied between takes. Forget what was on screen: the
+      // next run replays the same script, so its numbers match the old ones
+      // and a diff would decide nothing had changed.
+      if (lastSeen) {
+        lastSeen = null;
+        for (const f of ready) push(f, {household: "Balances", summary: "", balances: [], settle: []});
+        log("-> ledger emptied");
+      }
+    } else if (stamp !== JSON.stringify(lastSeen)) {
       lastSeen = state.ledger;
       log("-> ui/notifications/tool-result  (" + state.ledger.balances.length + " people)");
       for (const f of ready) push(f, state.ledger);
@@ -170,31 +179,44 @@ def build(tally_url: str) -> Starlette:
         json.dumps(BALANCE_APP).replace("</script>", "<\\/script>"),
     ).encode()
     fallback = sample_ledger()
-    state: dict[str, Any] = {"client": None}
+    state: dict[str, Any] = {"session": None, "client": None}
+
+    async def connect() -> Any:
+        """Open a session, or reopen one the server dropped.
+
+        Restarting Tally between takes kills this client. Without reconnecting,
+        the screen quietly falls back to the sample ledger and the next take
+        films numbers that came from nowhere.
+        """
+        if state["session"] is not None:
+            return state["session"]
+        client = Client(tally_url, extensions=[advertise(APPS_EXTENSION, {"mimeTypes": [APP_MIME_TYPE]})])
+        state["session"] = await client.__aenter__()
+        state["client"] = client
+        return state["session"]
+
+    async def drop() -> None:
+        client, state["client"], state["session"] = state["client"], None, None
+        if client is not None:
+            with contextlib.suppress(Exception):
+                await client.__aexit__(None, None, None)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: Starlette) -> AsyncIterator[None]:
-        client = Client(tally_url, extensions=[advertise(APPS_EXTENSION, {"mimeTypes": [APP_MIME_TYPE]})])
-        try:
-            state["client"] = await client.__aenter__()
-        except Exception:
-            print(f"No Tally server on {tally_url}; showing the sample ledger.")
-            state["client"] = None
+        with contextlib.suppress(Exception):
+            await connect()
         yield
-        if state["client"] is not None:
-            with contextlib.suppress(Exception):
-                await client.__aexit__(None, None, None)
+        await drop()
 
     async def home(_: Request) -> HTMLResponse:
         return HTMLResponse(page)
 
     async def ledger(_: Request) -> JSONResponse:
-        client = state["client"]
-        if client is None:
-            return JSONResponse({"source": "sample", "ledger": fallback})
         try:
-            result = await client.call_tool("show_balances", {})
+            session = await connect()
+            result = await session.call_tool("show_balances", {})
         except Exception:
+            await drop()
             return JSONResponse({"source": "sample", "ledger": fallback})
         if result.is_error or not result.structured_content:
             # No household yet: the app shows its empty state rather than stale numbers.

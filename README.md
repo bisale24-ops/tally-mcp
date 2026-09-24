@@ -1,5 +1,8 @@
 # Tally — a shared household ledger you talk to
 
+[![tests](https://github.com/bisale24-ops/tally-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/bisale24-ops/tally-mcp/actions/workflows/tests.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-black.svg)](LICENSE)
+
 An MCP server for Alexa+ that tracks who paid for what in a household, and works
 out the fewest payments that settle everyone up.
 
@@ -215,6 +218,10 @@ else's ledger.
 
 See [FRICTION.md](FRICTION.md) for what the Amazon and MCP tooling got right
 and where it cost time.
+
+## Contributing
+
+Where help is useful, and how to run the suite: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

@@ -48,3 +48,5 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S105", "S106"]
+# video build tooling: card HTML lines run long, and ffmpeg/ffprobe are called by name on purpose
+"video/*" = ["E501", "S603", "S607"]

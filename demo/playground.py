@@ -34,7 +34,6 @@ import re
 import secrets
 import tempfile
 import time
-import urllib.error
 import urllib.request
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -62,18 +61,39 @@ MAX_SANDBOXES = 300
 IDLE_SECONDS = 30 * 60
 COOKIE = "tally_sandbox"
 
-LLM_URL = os.environ.get("LLM_URL", "https://api.publicai.co/v1/chat/completions")
-LLM_MODEL = os.environ.get("LLM_MODEL", "swiss-ai/apertus-v1.5-70b")
-LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "12"))
+# Two free endpoints, both OpenAI-shaped. Gemini answers in about a second when a key is
+# present; Public AI (Apertus 70B) needs no card but sometimes holds a request for a minute,
+# which is why a slow call is raced against a second copy of itself (see `route`).
+ENDPOINTS = (
+    {
+        "name": "gemini",
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "model": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+        "env": "GEMINI_API_KEY",
+        "file": "gemini.key",
+    },
+    {
+        "name": "publicai",
+        "url": "https://api.publicai.co/v1/chat/completions",
+        "model": os.environ.get("PUBLICAI_MODEL", "swiss-ai/apertus-v1.5-70b"),
+        "env": "PUBLICAI_API_KEY",
+        "file": "publicai.key",
+    },
+)
+LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "20"))  # one request
+HEDGE_AFTER = float(os.environ.get("LLM_HEDGE_AFTER", "7"))  # send a second copy if the first is this slow
+GIVE_UP_AFTER = float(os.environ.get("LLM_GIVE_UP_AFTER", "16"))  # then the pattern router answers
 
 
-def llm_key() -> str | None:
-    key = os.environ.get("PUBLICAI_API_KEY", "").strip()
-    if key:
-        return key
-    path = Path.home() / ".config" / "publicai.key"
-    with contextlib.suppress(OSError):
-        return path.read_text().strip() or None
+def endpoint() -> dict[str, str] | None:
+    """The first endpoint with a key, from the environment or ~/.config."""
+    for spec in ENDPOINTS:
+        key = os.environ.get(spec["env"], "").strip()
+        if not key:
+            with contextlib.suppress(OSError):
+                key = (Path.home() / ".config" / spec["file"]).read_text().strip()
+        if key:
+            return {**spec, "key": key}
     return None
 
 
@@ -199,11 +219,11 @@ def _spec(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def route_with_model(sentence: str, tools: list[dict[str, Any]], members: list[str]) -> dict[str, Any]:
     """Ask the model which tools to call. Raises on any failure, so the caller can fall back."""
-    key = llm_key()
-    if not key:
+    spec = endpoint()
+    if spec is None:
         raise RuntimeError("no model key")
     body = {
-        "model": LLM_MODEL,
+        "model": spec["model"],
         "temperature": 0,
         "max_tokens": 400,
         "messages": [
@@ -213,12 +233,12 @@ def route_with_model(sentence: str, tools: list[dict[str, Any]], members: list[s
         # tool_choice is deliberately unset: forcing "auto" makes this model write calls into the text.
         "tools": _spec(tools),
     }
-    request = urllib.request.Request(  # noqa: S310 - LLM_URL is an https endpoint set by the operator
-        LLM_URL,
+    request = urllib.request.Request(  # noqa: S310 - endpoints are fixed https URLs
+        spec["url"],
         data=json.dumps(body).encode(),
         headers={
             "content-type": "application/json",
-            "authorization": f"Bearer {key}",
+            "authorization": f"Bearer {spec['key']}",
             # Cloudflare in front of Public AI refuses urllib's default User-Agent (403, code 1010).
             "user-agent": "tally-playground/1.0 (+https://github.com/bisale24-ops/tally-mcp)",
         },
@@ -240,11 +260,50 @@ def route_with_model(sentence: str, tools: list[dict[str, Any]], members: list[s
         if isinstance(args, dict):
             calls.append({"tool": fn["name"], "arguments": args})
     return {
-        "router": f"model · {LLM_MODEL.split('/')[-1]}",
+        "router": f"model · {spec['model'].split('/')[-1]}",
         "calls": calls,
         "text": (message.get("content") or "").strip(),
         "ms": round((time.perf_counter() - started) * 1000),
     }
+
+
+async def route(sentence: str, tools: list[dict[str, Any]], members: list[str]) -> dict[str, Any]:
+    """The model's answer, hedged: a second identical request if the first is slow, the patterns if both are.
+
+    Public AI usually answers in 3-7 s but holds roughly one request in three for a minute. A copy
+    sent after HEDGE_AFTER usually lands on a free worker and comes back first.
+    """
+    done = anyio.Event()
+    outcome: dict[str, Any] = {}
+    failures: list[str] = []
+
+    async def attempt() -> None:
+        try:
+            result = await anyio.to_thread.run_sync(route_with_model, sentence, tools, members, abandon_on_cancel=True)
+        except Exception as exc:  # any failure of one copy; the other may still answer
+            failures.append(type(exc).__name__)
+            if len(failures) >= 2 or "no model key" in str(exc):
+                done.set()
+            return
+        if not done.is_set():
+            outcome.update(result)
+            done.set()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(attempt)
+        with anyio.move_on_after(HEDGE_AFTER):
+            await done.wait()
+        if not done.is_set():
+            tg.start_soon(attempt)
+        with anyio.move_on_after(GIVE_UP_AFTER - HEDGE_AFTER):
+            await done.wait()
+        tg.cancel_scope.cancel()
+
+    if outcome:
+        return outcome
+    routed = route_with_patterns(sentence)
+    routed["why"] = ", ".join(failures) or "slow"
+    return routed
 
 
 _UNIT_WORDS = [
@@ -419,11 +478,7 @@ def build(base: Path | None = None) -> Starlette:
         box = await boxes.get(sid)
         async with box.lock, box.session() as session:
             members = [row["name"] for row in ((await box.ledger(session)) or {}).get("balances", [])] or [SPEAKER]
-            try:
-                routed = await anyio.to_thread.run_sync(route_with_model, sentence, box.tools, members)
-            except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, KeyError, ValueError) as exc:
-                routed = route_with_patterns(sentence)
-                routed["why"] = type(exc).__name__
+            routed = await route(sentence, box.tools, members)
             results = [await box.call(session, c["tool"], c["arguments"]) for c in routed["calls"][:4]]
             ledger = await box.ledger(session)
         spoken = " ".join(r["text"] for r in results) or routed["text"] or "Sorry, I didn't catch that."
@@ -439,7 +494,8 @@ def build(base: Path | None = None) -> Starlette:
         return with_cookie(JSONResponse({"ok": True}), sid, new)
 
     async def health(_: Request) -> JSONResponse:
-        return JSONResponse({"ok": True, "sandboxes": len(boxes.items), "model": bool(llm_key())})
+        spec = endpoint()
+        return JSONResponse({"ok": True, "sandboxes": len(boxes.items), "model": spec and spec["model"]})
 
     @contextlib.asynccontextmanager
     async def lifespan(_: Starlette):  # type: ignore[no-untyped-def]

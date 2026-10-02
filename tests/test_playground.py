@@ -74,7 +74,9 @@ def _fake_model(message: dict) -> object:
 
 
 def test_a_tool_the_server_never_published_is_not_called(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(playground, "llm_key", lambda: "k")
+    monkeypatch.setattr(
+        playground, "endpoint", lambda: {"name": "t", "url": "https://x.test", "model": "m", "key": "k"}
+    )
     message = {
         "content": None,
         "tool_calls": [
@@ -96,7 +98,9 @@ def test_the_model_never_sees_an_unset_tool_choice(monkeypatch: pytest.MonkeyPat
         seen.update(json.loads(request.data))
         return _fake_model({"content": "ok"})(request, timeout)
 
-    monkeypatch.setattr(playground, "llm_key", lambda: "k")
+    monkeypatch.setattr(
+        playground, "endpoint", lambda: {"name": "t", "url": "https://x.test", "model": "m", "key": "k"}
+    )
     monkeypatch.setattr(playground.urllib.request, "urlopen", capture)
     playground.route_with_model("hi", TOOLS, ["Sam"])
     assert "tool_choice" not in seen
@@ -105,7 +109,7 @@ def test_the_model_never_sees_an_unset_tool_choice(monkeypatch: pytest.MonkeyPat
 
 @pytest.fixture
 async def site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(playground, "llm_key", lambda: None)  # no network: the fallback answers
+    monkeypatch.setattr(playground, "endpoint", lambda: None)  # no network: the fallback answers
     app = playground.build(tmp_path)
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app=app)
@@ -135,7 +139,7 @@ async def test_a_conversation_runs_on_the_real_server(site: httpx.AsyncClient) -
 
 @pytest.mark.anyio
 async def test_each_browser_gets_its_own_household(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(playground, "llm_key", lambda: None)
+    monkeypatch.setattr(playground, "endpoint", lambda: None)
     app = playground.build(tmp_path)
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app=app)
@@ -163,3 +167,46 @@ async def test_reset_gives_a_fresh_household(site: httpx.AsyncClient) -> None:
 async def test_an_empty_sentence_is_refused(site: httpx.AsyncClient) -> None:
     response = await site.post("/say", json={"text": "   "})
     assert response.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_a_slow_model_is_raced_by_a_second_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Public AI holds about one request in three for a minute; the copy sent later must win."""
+    import threading
+    import time
+
+    calls = []
+    lock = threading.Lock()
+
+    def model(sentence, tools, members):
+        with lock:
+            calls.append(time.monotonic())
+            first = len(calls) == 1
+        if first:
+            time.sleep(1.0)  # the stuck request
+            return {"router": "model · slow", "calls": [], "text": "late", "ms": 1000}
+        return {"router": "model · fast", "calls": [], "text": "on time", "ms": 5}
+
+    monkeypatch.setattr(playground, "route_with_model", model)
+    monkeypatch.setattr(playground, "HEDGE_AFTER", 0.1)
+    monkeypatch.setattr(playground, "GIVE_UP_AFTER", 3.0)
+    routed = await playground.route("who owes what", TOOLS, ["Sam"])
+    assert routed["text"] == "on time"
+    assert len(calls) == 2
+
+
+@pytest.mark.anyio
+async def test_when_both_copies_hang_the_patterns_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    def stuck(sentence, tools, members):
+        time.sleep(0.5)
+        raise TimeoutError
+
+    monkeypatch.setattr(playground, "route_with_model", stuck)
+    monkeypatch.setattr(playground, "HEDGE_AFTER", 0.05)
+    monkeypatch.setattr(playground, "GIVE_UP_AFTER", 2.0)
+    routed = await playground.route("Who owes what?", TOOLS, ["Sam"])
+    assert routed["router"] == "pattern fallback"
+    assert routed["calls"] == [{"tool": "show_balances", "arguments": {}}]
+    assert routed["why"] == "TimeoutError, TimeoutError"

@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: tally-playground
+    runtime: python
+    plan: free
+    buildCommand: pip install uv && uv sync --frozen --no-dev
+    startCommand: uv run --no-dev python demo/playground.py --host 0.0.0.0
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.7"
+      - key: PUBLICAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false

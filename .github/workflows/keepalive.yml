@@ -1,0 +1,20 @@
+# Keep the free Render instance awake while judges are looking, and only then.
+# Render's free tier sleeps after 15 minutes idle (a ~50 s cold start) and allows 750
+# instance-hours a month across the workspace; waking two services around the clock in
+# November would exceed that and suspend both. So: every 5 minutes, US daytime
+# (12:00-02:00 UTC), on judging days only.
+name: keep-alive during judging
+on:
+  schedule:
+    - cron: "*/5 12-23 * * *"
+    - cron: "*/5 0-1 * * *"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ping inside the judging window (2026-11-09 .. 2026-11-20)
+        run: |
+          today=$(date -u +%F)
+          if [[ "$today" < "2026-11-09" || "$today" > "2026-11-20" ]]; then echo "outside judging window"; exit 0; fi
+          curl -fsS -m 90 --retry 2 https://tally-playground.onrender.com/healthz > /dev/null && echo "awake"

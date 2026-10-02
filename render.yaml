@@ -11,5 +11,3 @@ services:
         value: "3.13.7"
       - key: PUBLICAI_API_KEY
         sync: false
-      - key: GEMINI_API_KEY
-        sync: false

@@ -170,7 +170,33 @@ everywhere, and the failure is silent.
 
 ---
 
-### 7. Credit where it is due
+### 7. Nobody outside the partner program can hear an add-on answer
+
+**Severity: medium** — it decides whether a reviewer ever experiences the product.
+
+**Attempted:** Let someone who is not me, and not an Amazon partner, talk to Tally.
+
+**Steps:** Looked for a public Alexa+ simulator, a test console that accepts an MCP
+URL, or a shareable beta link.
+
+**Expected vs. actual:** Expected some way to hand a reviewer a link. The simulator
+and `alexa-ai deploy` are partner-only, so an add-on built outside the program can be
+shown on video but never tried. The routing step - which tool Alexa+ picks for a
+sentence - is the part a builder most needs to see go wrong, and it is the part that
+cannot be observed at all.
+
+**Workaround:** A browser playground (`demo/playground.py`, live at
+tally-playground.onrender.com) that plays the device: speech to text in the browser,
+a language model standing in for Alexa+'s router over the server's published tool
+list, the server's own text read aloud. It is a stand-in, labelled as one.
+
+**Suggestion:** A routing-only test endpoint: post an utterance and an MCP server URL,
+get back the tool call Alexa+ would make. No voice, no device, no publishing - just the
+decision, which is what a builder needs to debug tool names and descriptions.
+
+---
+
+### 8. Credit where it is due
 
 Three things in the Python SDK were better than they had to be, and each saved
 real time:

@@ -15,6 +15,21 @@ out the fewest payments that settle everyone up.
    → 2 payments settle Apartment 4B. The biggest: Maya owes Sam 44 dollars.
 ```
 
+## Try it — no Echo needed
+
+**[tally-playground.onrender.com](https://tally-playground.onrender.com)** — press the ring and talk (or type).
+You are Sam in a private sandbox household with Chris and Maya; nobody else sees it.
+
+The Alexa+ simulator is partner-only, so the page plays the device and nothing else:
+your browser turns speech into text, a language model routes the sentence to one of
+the tools this server publishes (the grey line under each sentence is that call), the
+real Tally server runs it over an MCP client session, and its own text is read aloud
+verbatim while the `ui://` balance sheet updates on a mock Echo Show. Details and the
+measurements behind the routing choices are in [demo/playground.py](demo/playground.py).
+
+The free instance sleeps after 15 minutes idle; the first request after that takes
+about a minute.
+
 ## Why voice, and why a shared device
 
 Splitting expenses is not an arithmetic problem — a calculator solved that
@@ -94,9 +109,18 @@ among itself.)
 
 ```bash
 uv sync
-uv run pytest                        # 243 tests
+uv run pytest                        # 265 tests
 uv run python -m tally --stdio       # for the MCP Inspector
 ```
+
+### Running the playground locally
+
+```bash
+uv run python demo/playground.py              # http://127.0.0.1:8978
+```
+
+A key in `PUBLICAI_API_KEY` (free, [Public AI](https://publicai.co)) or `GEMINI_API_KEY`
+turns on model routing; without one a pattern router answers and the page marks it.
 
 ### Seeing it work without an Echo
 
@@ -197,7 +221,7 @@ else's ledger.
 
 ## Testing
 
-243 tests, in seven layers:
+265 tests, in eight layers:
 
 - **Property-based** (Hypothesis) over the money and ledger invariants —
   conservation, fairness bounds, settlement correctness.
@@ -213,6 +237,9 @@ else's ledger.
 - **Two people, one ledger** — the claim the product rests on: a second
   flatmate joins, "I" means a different person for each of them, either can undo
   a misheard entry, and a stranger reaches nothing.
+- **The playground** — amounts said aloud, the fallback router, sandbox isolation
+  between browsers, a slow model raced by a second copy, and the guard rails on
+  what the model may call: only published tools, never a retry key of its own.
 - **OAuth over real HTTP** — the whole authorization code flow, plus the
   attacks it exists to stop: replayed codes and forged PKCE verifiers.
 

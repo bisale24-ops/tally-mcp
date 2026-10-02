@@ -11,3 +11,4 @@ __pycache__/
 VIDEO.md
 .DS_Store
 .impeccable/
+video/build/

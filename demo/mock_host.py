@@ -174,11 +174,15 @@ def sample_ledger() -> dict[str, Any]:
 
 
 def build(tally_url: str, zoom: float = 1.0) -> Starlette:
-    page = HOST_PAGE.replace("__ZOOM__", f"{zoom:g}").replace(
-        # The app closes its own <script>; unescaped it would close this one too.
-        "__APP__",
-        json.dumps(BALANCE_APP).replace("</script>", "<\\/script>"),
-    ).encode()
+    page = (
+        HOST_PAGE.replace("__ZOOM__", f"{zoom:g}")
+        .replace(
+            # The app closes its own <script>; unescaped it would close this one too.
+            "__APP__",
+            json.dumps(BALANCE_APP).replace("</script>", "<\\/script>"),
+        )
+        .encode()
+    )
     fallback = sample_ledger()
     state: dict[str, Any] = {"session": None, "client": None}
 

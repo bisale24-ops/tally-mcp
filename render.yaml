@@ -6,8 +6,7 @@ services:
     buildCommand: pip install uv && uv sync --frozen --no-dev
     startCommand: uv run --no-dev python demo/playground.py --host 0.0.0.0
     healthCheckPath: /healthz
+    # PUBLICAI_API_KEY (or GEMINI_API_KEY) goes in the service's Environment tab; without one the pattern router answers.
     envVars:
       - key: PYTHON_VERSION
         value: "3.13.7"
-      - key: PUBLICAI_API_KEY
-        sync: false

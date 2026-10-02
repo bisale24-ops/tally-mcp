@@ -204,17 +204,62 @@ Turn the sentence into calls to Tally's tools. Rules:
 - "Split with Chris and Maya" includes the speaker: split_between is ["me", "Chris", "Maya"].
   "Just him and me" after "Chris paid" means split_between ["Chris", "me"]. No split named: leave split_between out.
 - Only use names the person said. Never invent a name, amount or description.
-- If the sentence is not about the household's money, reply with one short sentence instead."""
+- "X paid me back N" / "paid back" / "settled up" is settle_up, never record_expense.
+- "Who owes what?" / "where do we stand?" is show_balances. "How much do I owe X?" is what_do_i_owe.
+- "Cancel that" / "undo" / "scratch that" is undo_last. "Add X" / "X moved in" is add_person.
+- If the sentence is not about the household's money, put one short sentence in "say" and call nothing.
+
+Tools:
+{signatures}
+
+Reply as JSON: {{"calls": [{{"tool": ..., "arguments": {{...}}}}], "say": ""}}. "say" stays empty when a tool fits."""
 
 
-def _spec(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "type": "function",
-            "function": {"name": t["name"], "description": t["description"], "parameters": t["schema"]},
-        }
-        for t in tools
-    ]
+def _signature(tool: dict[str, Any]) -> str:
+    props = {k: v for k, v in tool["schema"].get("properties", {}).items() if k != "idempotency_key"}
+    required = set(tool["schema"].get("required", []))
+    args = ", ".join(name + ("" if name in required else "?") for name in props)
+    first = (tool["description"].strip().splitlines() or [""])[0]
+    return f"- {tool['name']}({args}): {first}".rstrip(": ")
+
+
+def reply_schema(tools: list[dict[str, Any]]) -> dict[str, Any]:
+    """A JSON schema the model's answer must match, one branch per published tool.
+
+    The model is asked for structured output rather than tool_calls. On Public AI the
+    tool_calls path is unreliable - the same model returns real tool_calls one hour and
+    writes the call as prose the next - while vLLM's schema-guided decoding cannot emit
+    anything but this shape: a tool the server publishes, with its own argument schema.
+    """
+
+    def strict(schema: dict[str, Any]) -> dict[str, Any]:
+        schema = json.loads(json.dumps(schema))
+        schema.pop("title", None)
+        # The device supplies a retry key, never the model: a key it invents ("maya_paid_back_44")
+        # would silently swallow the next genuine 44-dollar repayment as a duplicate.
+        schema.get("properties", {}).pop("idempotency_key", None)
+        for prop in schema.get("properties", {}).values():
+            prop.pop("title", None)
+        schema["additionalProperties"] = False
+        return schema
+
+    call = {
+        "anyOf": [
+            {
+                "type": "object",
+                "properties": {"tool": {"const": t["name"]}, "arguments": strict(t["schema"])},
+                "required": ["tool", "arguments"],
+                "additionalProperties": False,
+            }
+            for t in tools
+        ]
+    }
+    return {
+        "type": "object",
+        "properties": {"calls": {"type": "array", "items": call, "maxItems": 4}, "say": {"type": "string"}},
+        "required": ["calls", "say"],
+        "additionalProperties": False,
+    }
 
 
 def route_with_model(sentence: str, tools: list[dict[str, Any]], members: list[str]) -> dict[str, Any]:
@@ -222,16 +267,16 @@ def route_with_model(sentence: str, tools: list[dict[str, Any]], members: list[s
     spec = endpoint()
     if spec is None:
         raise RuntimeError("no model key")
+    system = SYSTEM.format(speaker=SPEAKER, members=", ".join(members), signatures="\n".join(map(_signature, tools)))
     body = {
         "model": spec["model"],
         "temperature": 0,
         "max_tokens": 400,
-        "messages": [
-            {"role": "system", "content": SYSTEM.format(speaker=SPEAKER, members=", ".join(members))},
-            {"role": "user", "content": sentence},
-        ],
-        # tool_choice is deliberately unset: forcing "auto" makes this model write calls into the text.
-        "tools": _spec(tools),
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": sentence}],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "route", "schema": reply_schema(tools), "strict": True},
+        },
     }
     request = urllib.request.Request(  # noqa: S310 - endpoints are fixed https URLs
         spec["url"],
@@ -246,23 +291,18 @@ def route_with_model(sentence: str, tools: list[dict[str, Any]], members: list[s
     started = time.perf_counter()
     with urllib.request.urlopen(request, timeout=LLM_TIMEOUT) as response:  # noqa: S310 - fixed https endpoint
         data = json.load(response)
-    message = data["choices"][0]["message"]
+    answer = json.loads(data["choices"][0]["message"].get("content") or "")
     known = {t["name"] for t in tools}
-    calls = []
-    for call in message.get("tool_calls") or ():
-        fn = call.get("function", {})
-        if fn.get("name") not in known:
-            continue  # a tool the server never published is not called, whatever the model says
-        try:
-            args = json.loads(fn.get("arguments") or "{}")
-        except ValueError:
-            continue
-        if isinstance(args, dict):
-            calls.append({"tool": fn["name"], "arguments": args})
+    calls = [
+        {"tool": c["tool"], "arguments": c["arguments"]}
+        for c in answer.get("calls") or ()
+        # guided decoding makes these checks redundant on Public AI; a provider without it must not slip past them
+        if isinstance(c, dict) and c.get("tool") in known and isinstance(c.get("arguments"), dict)
+    ]
     return {
         "router": f"model · {spec['model'].split('/')[-1]}",
         "calls": calls,
-        "text": (message.get("content") or "").strip(),
+        "text": "" if calls else str(answer.get("say") or "").strip(),
         "ms": round((time.perf_counter() - started) * 1000),
     }
 

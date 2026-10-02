@@ -77,34 +77,53 @@ def test_a_tool_the_server_never_published_is_not_called(monkeypatch: pytest.Mon
     monkeypatch.setattr(
         playground, "endpoint", lambda: {"name": "t", "url": "https://x.test", "model": "m", "key": "k"}
     )
-    message = {
-        "content": None,
-        "tool_calls": [
-            {"function": {"name": "transfer_money", "arguments": '{"amount": "500"}'}},
-            {"function": {"name": "show_balances", "arguments": "{}"}},
-            {"function": {"name": "show_balances", "arguments": "not json"}},
+    answer = {
+        "calls": [
+            {"tool": "transfer_money", "arguments": {"amount": "500"}},
+            {"tool": "show_balances", "arguments": {}},
+            {"tool": "show_balances", "arguments": "not an object"},
         ],
+        "say": "",
     }
-    monkeypatch.setattr(playground.urllib.request, "urlopen", _fake_model(message))
+    monkeypatch.setattr(playground.urllib.request, "urlopen", _fake_model({"content": json.dumps(answer)}))
     routed = playground.route_with_model("who owes what", TOOLS, ["Sam"])
     assert routed["calls"] == [{"tool": "show_balances", "arguments": {}}]
 
 
-def test_the_model_never_sees_an_unset_tool_choice(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Forcing tool_choice makes this model write calls into its text; the request must leave it out."""
+def test_the_reply_is_constrained_to_published_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Structured output, one schema branch per tool: the model cannot name another tool or another argument."""
     seen = {}
 
     def capture(request, timeout):
         seen.update(json.loads(request.data))
-        return _fake_model({"content": "ok"})(request, timeout)
+        return _fake_model({"content": json.dumps({"calls": [], "say": "I only keep the household's books."})})(
+            request, timeout
+        )
 
     monkeypatch.setattr(
         playground, "endpoint", lambda: {"name": "t", "url": "https://x.test", "model": "m", "key": "k"}
     )
     monkeypatch.setattr(playground.urllib.request, "urlopen", capture)
-    playground.route_with_model("hi", TOOLS, ["Sam"])
-    assert "tool_choice" not in seen
-    assert seen["tools"][0]["function"]["name"] == "show_balances"
+    routed = playground.route_with_model("what's the weather", TOOLS, ["Sam"])
+    schema = seen["response_format"]["json_schema"]["schema"]
+    branches = schema["properties"]["calls"]["items"]["anyOf"]
+    assert [b["properties"]["tool"]["const"] for b in branches] == ["show_balances"]
+    assert branches[0]["properties"]["arguments"]["additionalProperties"] is False
+    assert "tools" not in seen and "tool_choice" not in seen
+    assert routed["calls"] == [] and routed["text"] == "I only keep the household's books."
+
+
+def test_the_prompt_lists_every_tool_with_its_arguments() -> None:
+    tool = {
+        "name": "settle_up",
+        "description": "Record a repayment.\nMore text.",
+        "schema": {
+            "type": "object",
+            "properties": {"amount": {}, "to": {}, "paid_by": {}},
+            "required": ["amount", "to"],
+        },
+    }
+    assert playground._signature(tool) == "- settle_up(amount, to, paid_by?): Record a repayment."
 
 
 @pytest.fixture
@@ -210,3 +229,22 @@ async def test_when_both_copies_hang_the_patterns_answer(monkeypatch: pytest.Mon
     assert routed["router"] == "pattern fallback"
     assert routed["calls"] == [{"tool": "show_balances", "arguments": {}}]
     assert routed["why"] == "TimeoutError, TimeoutError"
+
+
+def test_the_model_cannot_set_a_retry_key() -> None:
+    tool = {
+        "name": "settle_up",
+        "description": "Record a repayment.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "amount": {"type": "string"},
+                "to": {"type": "string"},
+                "idempotency_key": {"type": "string"},
+            },
+            "required": ["amount", "to"],
+        },
+    }
+    (branch,) = playground.reply_schema([tool])["properties"]["calls"]["items"]["anyOf"]
+    assert "idempotency_key" not in branch["properties"]["arguments"]["properties"]
+    assert "idempotency_key" not in playground._signature(tool)
